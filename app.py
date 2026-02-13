@@ -3,32 +3,31 @@ import pandas as pd
 import random
 from datetime import datetime, timedelta
 from io import BytesIO
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-# --- STYLING CONSTANTS ---
-COLORS = {"Sous - sol": "DDEBF7", "RDC": "FCE4D6", "1st floor": "E2EFDA", "Header": "F2F2F2"}
+# --- CONFIGURATION ---
+COLORS = {
+    "Sous - sol": "DDEBF7", 
+    "RDC": "FCE4D6",      
+    "1st floor": "E2EFDA", 
+    "Header": "F2F2F2"    
+}
 
-st.set_page_config(page_title="Lab Draw Generator", page_icon="🧪")
+st.set_page_config(page_title="Lab Schedule Generator", layout="wide")
 st.title("🧪 Lab Task Draw Generator")
-st.write("Upload your Excel file and select the date range to generate the schedule.")
 
-# 1. File Upload
-uploaded_file = st.file_uploader("Upload your Input Excel File", type=["xlsx"])
+uploaded_file = st.file_uploader("Choose your Excel input file", type="xlsx")
 
 if uploaded_file:
-    # 2. Date Inputs in Sidebar
     with st.sidebar:
-        st.header("Settings")
+        st.header("Parameters")
         start_date = st.date_input("Start Date", datetime.now())
-        end_date = st.date_input("End Date", datetime.now() + timedelta(weeks=8))
-        
-    if st.button("Generate Schedule"):
-        # Snap start date to Monday
-        monday_start = start_date - timedelta(days=start_date.weekday())
-        
-        # Load and process data
+        end_date = st.date_input("End Date", datetime.now() + timedelta(weeks=12))
+
+    if st.button("Generate & Style Schedule"):
+        # 1. Process Data
         df = pd.read_excel(uploaded_file, header=[0, 1])
         
-        # Header Reconstruction
         raw_cols = df.columns.to_frame()
         raw_cols[0] = raw_cols[0].mask(raw_cols[0].str.contains('Unnamed')).ffill()
         df.columns = [f"{col[0]} - {col[1]}" if "Unnamed" not in str(col[1]) else col[0] for col in raw_cols.values]
@@ -40,10 +39,10 @@ if uploaded_file:
             except: return datetime.max.date()
         df['expiry'] = df[contract_col].apply(parse_contract)
 
-        # Draw Logic
+        # 2. Draw Logic
         buckets = {task: [] for task in task_cols}
         schedule_data = []
-        curr = monday_start
+        curr = start_date - timedelta(days=start_date.weekday()) # Monday anchor
 
         while curr <= end_date:
             year, week_num, _ = curr.isocalendar()
@@ -71,23 +70,37 @@ if uploaded_file:
             schedule_data.append(week_row)
             curr += timedelta(days=7)
 
-        # Create Styled Excel in Memory
+        # 3. Create Styled Excel in Memory
         output = BytesIO()
+        final_df = pd.DataFrame(schedule_data)
+        
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             final_df.to_excel(writer, index=False, sheet_name='Schedule')
             workbook = writer.book
             worksheet = writer.sheets['Schedule']
             
-            # Add your styling logic here (Fonts, Fills, Borders)
-            # Example: 
-            for cell in worksheet[1]: # Style the header row
-                cell.font = Font(bold=True)
-                # ... etc ...
+            header_font = Font(bold=True)
+            border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
-        st.success("Schedule Generated!")
+            for col_num, column_title in enumerate(final_df.columns, 1):
+                cell = worksheet.cell(row=1, column=col_num)
+                cell.font = header_font
+                cell.border = border
+                cell.alignment = Alignment(horizontal='center')
+                
+                # Apply Colors
+                fill_color = COLORS["Header"]
+                if "Sous - sol" in column_title: fill_color = COLORS["Sous - sol"]
+                elif "RDC" in column_title: fill_color = COLORS["RDC"]
+                elif "1st floor" in column_title: fill_color = COLORS["1st floor"]
+                
+                cell.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
+                worksheet.column_dimensions[cell.column_letter].width = 22
+
+        st.success("Drawing complete!")
         st.download_button(
-            label="📥 Download Excel Schedule",
+            label="📥 Download Styled Excel Schedule",
             data=output.getvalue(),
-            file_name="lab_schedule.xlsx",
+            file_name=f"Lab_Schedule_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
