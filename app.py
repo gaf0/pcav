@@ -73,16 +73,21 @@ if uploaded_file:
 
         # Create Styled Excel in Memory
         output = BytesIO()
-        final_df = pd.DataFrame(schedule_data)
-        
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             final_df.to_excel(writer, index=False, sheet_name='Schedule')
-            # (Formatting logic here - omitted for brevity but same as previous code)
+            workbook = writer.book
+            worksheet = writer.sheets['Schedule']
             
-        st.success("Schedule Generated Successfully!")
+            # Add your styling logic here (Fonts, Fills, Borders)
+            # Example: 
+            for cell in worksheet[1]: # Style the header row
+                cell.font = Font(bold=True)
+                # ... etc ...
+
+        st.success("Schedule Generated!")
         st.download_button(
             label="📥 Download Excel Schedule",
             data=output.getvalue(),
-            file_name=f"Schedule_{start_date}_to_{end_date}.xlsx",
+            file_name="lab_schedule.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
