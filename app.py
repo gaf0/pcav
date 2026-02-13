@@ -19,7 +19,6 @@ st.title("🧪 Lab Task Draw Generator")
 uploaded_file = st.file_uploader("Choose your Excel input file", type="xlsx")
 
 if uploaded_file:
-    # Use columns to make the UI look cleaner
     col1, col2 = st.columns(2)
     with col1:
         start_date = st.date_input("Start Date", datetime.now())
@@ -27,21 +26,25 @@ if uploaded_file:
         end_date = st.date_input("End Date", datetime.now() + timedelta(weeks=12))
 
     if st.button("Generate & Style Schedule"):
-        # 1. Process Data
         try:
+            # 1. Load Data
             df = pd.read_excel(uploaded_file, header=[0, 1])
             
+            # Reconstruct Headers
             raw_cols = df.columns.to_frame()
             raw_cols[0] = raw_cols[0].mask(raw_cols[0].str.contains('Unnamed')).ffill()
             df.columns = [f"{col[0]} - {col[1]}" if "Unnamed" not in str(col[1]) else col[0] for col in raw_cols.values]
             
-            name_col = df.columns[0]
-            contract_col = df.columns[2]
-            task_cols = df.columns[3:]
+            name_col, contract_col, task_cols = df.columns[0], df.columns[2], df.columns[3:]
 
+            # FIX: Robust Date Parsing for "Mar.26" format
             def parse_contract(x):
-                try: return datetime.strptime(str(x), "%b.%y").date()
-                except: return datetime.max.date()
+                try:
+                    # Assumes format "Mon.YY" like Mar.26
+                    return datetime.strptime(str(x), "%b.%y").date()
+                except:
+                    return datetime.max.date()
+            
             df['expiry'] = df[contract_col].apply(parse_contract)
 
             # 2. Draw Logic
@@ -50,24 +53,32 @@ if uploaded_file:
             curr = start_date - timedelta(days=start_date.weekday()) # Monday anchor
 
             while curr <= end_date:
-                year, week_num, _ = curr.isocalendar()
-                week_label = f"W{week_num} ({curr.strftime('%d/%m/%Y')})"
+                week_label = f"W{curr.isocalendar()[1]} ({curr.strftime('%d/%m/%Y')})"
                 week_row = {"Week": week_label}
                 picked_this_week = set()
 
                 for task in task_cols:
-                    eligible = df[(df[task].notna()) & (df[task] != False) & (df['expiry'] >= curr)][name_col].tolist()
+                    # Eligibility Check: Active contract AND Ticked box
+                    eligible = df[
+                        (df[task].notna()) & 
+                        (df[task] != False) & 
+                        (df['expiry'] >= curr) # MUST be active during this specific week
+                    ][name_col].tolist()
+                    
                     if not eligible:
-                        week_row[task] = "N/A"
+                        week_row[task] = "N/A (No active contracts)"
                         continue
                     
-                    if not any(p in eligible for p in buckets[task]):
+                    # Refill bucket logic
+                    valid_in_bucket = [p for p in buckets[task] if p in eligible]
+                    if not valid_in_bucket:
                         buckets[task] = list(eligible)
                         random.shuffle(buckets[task])
-                    
-                    candidates = [p for p in buckets[task] if p in eligible]
-                    fresh = [p for p in candidates if p not in picked_this_week]
-                    winner = random.choice(fresh if fresh else candidates)
+                        valid_in_bucket = buckets[task]
+
+                    # Pick winner prioritizing those not already picked this week
+                    fresh = [p for p in valid_in_bucket if p not in picked_this_week]
+                    winner = random.choice(fresh if fresh else valid_in_bucket)
                     
                     buckets[task].remove(winner)
                     picked_this_week.add(winner)
@@ -76,41 +87,36 @@ if uploaded_file:
                 schedule_data.append(week_row)
                 curr += timedelta(days=7)
 
-            # 3. Create Styled Excel in Memory
+            # 3. Create Excel
             output = BytesIO()
             final_df = pd.DataFrame(schedule_data)
             
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 final_df.to_excel(writer, index=False, sheet_name='Schedule')
-                workbook = writer.book
-                worksheet = writer.sheets['Schedule']
+                ws = writer.sheets['Schedule']
                 
-                header_font = Font(bold=True)
-                border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-
-                for col_num, column_title in enumerate(final_df.columns, 1):
-                    cell = worksheet.cell(row=1, column=col_num)
-                    cell.font = header_font
-                    cell.border = border
+                # Apply same styling logic
+                for col_num, col_title in enumerate(final_df.columns, 1):
+                    cell = ws.cell(row=1, column=col_num)
+                    cell.font = Font(bold=True)
                     cell.alignment = Alignment(horizontal='center')
                     
-                    # Apply Colors
                     fill_color = COLORS["Header"]
-                    if "Sous - sol" in column_title: fill_color = COLORS["Sous - sol"]
-                    elif "RDC" in column_title: fill_color = COLORS["RDC"]
-                    elif "1st floor" in column_title: fill_color = COLORS["1st floor"]
+                    if "Sous - sol" in col_title: fill_color = COLORS["Sous - sol"]
+                    elif "RDC" in col_title: fill_color = COLORS["RDC"]
+                    elif "1st floor" in col_title: fill_color = COLORS["1st floor"]
                     
                     cell.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
-                    worksheet.column_dimensions[cell.column_letter].width = 22
+                    ws.column_dimensions[cell.column_letter].width = 25
 
-            st.success("Drawing complete! Preview of the first 5 weeks:")
-            st.dataframe(final_df.head()) # Show a preview in the app
+            st.success("Corrected Schedule Generated!")
+            st.dataframe(final_df) # Visual preview to verify Yasmine's absence after March
             
             st.download_button(
-                label="📥 Download Styled Excel Schedule",
+                label="📥 Download Corrected Schedule",
                 data=output.getvalue(),
-                file_name=f"Lab_Schedule_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                file_name=f"Corrected_Lab_Schedule_{datetime.now().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         except Exception as e:
-            st.error(f"An error occurred: {e}")
+            st.error(f"Error: {e}")
